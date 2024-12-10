@@ -34,18 +34,20 @@ jobs:
         run: |
           go test -v -race -parallel 4 -json -coverprofile coverage.txt -covermode atomic ./... | tee test-output.json
           echo "Test timing summary:"
-          jq -r '
+          echo '
             [select(.Action == "pass")] |
             group_by(.Package) |
             map({
               Package: .[0].Package,
               Elapsed: (map(.Elapsed) | add)
             }) |
-            sort_by(-.Elapsed) |
+            sort_by(.Elapsed) |
+            reverse |
             .[0:10] |
             .[] |
-            "\(.Package): \(.Elapsed)s"
-          ' test-output.json
+            "\(.Package): \(.Elapsed | tostring | if contains(".") then . else . + ".0" end)s"
+          ' > test-summary.jq
+          jq -r -f test-summary.jq test-output.json
 
   release-please:
     needs: test
