@@ -21,10 +21,20 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
           cache: true
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
       - run: go mod download
       - name: Run tests
         run: |
-          go test -v -race -coverprofile coverage.txt -covermode atomic ./...
+          go test -v -race -parallel 4 -json -coverprofile coverage.txt -covermode atomic ./... | tee test-output.json
+          echo "Test timing summary:"
+          jq -r 'select(.Action == "pass") | "\(.Package): \(.Elapsed)s"' test-output.json | sort -k2 -nr | head -n 10
 
   release-please:
     needs: test
@@ -52,14 +62,10 @@ jobs:
         with:
           go-version: '>=1.23.0'
           cache: true
-      - uses: crazy-max/ghaction-import-gpg@v5
-        with:
-          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.PASSPHRASE }}
       - uses: goreleaser/goreleaser-action@v4
         with:
           version: latest
-          args: release --clean
+          args: release --clean --skip-sign
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
