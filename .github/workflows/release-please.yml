@@ -30,28 +30,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
       - run: go mod download
-
-      # Windows test step
-      - name: Run tests (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: Run tests
         run: |
           go test -v -race -parallel 4 -json -coverprofile coverage.txt -covermode atomic ./... | tee test-output.json
           echo "Test timing summary:"
-          jq -r 'select(.Action == "pass") | "\(.Package): \(.Elapsed)s"' test-output.json |
-            ForEach-Object { $_ -split ': ' | Select-Object @{n='Package';e={$_[0]}},@{n='Time';e={[double]($_[1] -replace 's$')}} } |
-            Sort-Object Time -Descending |
-            Select-Object -First 10 |
-            ForEach-Object { "$($_.Package): $($_.Time)s" }
-
-      # Unix test step
-      - name: Run tests (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          go test -v -race -parallel 4 -json -coverprofile coverage.txt -covermode atomic ./... | tee test-output.json
-          echo "Test timing summary:"
-          jq -r 'select(.Action == "pass") | "\(.Package): \(.Elapsed)s"' test-output.json | sort -k2 -nr | head -n 10
+          jq -r '
+            [select(.Action == "pass")] |
+            sort_by(.Elapsed) |
+            reverse |
+            .[0:10] |
+            .[] |
+            "\(.Package): \(.Elapsed)s"
+          ' test-output.json
 
   release-please:
     needs: test
