@@ -1,31 +1,23 @@
-# take
+# take - Cross-platform Directory Navigation
 
-A cross-platform implementation of the ZSH `take` command. Creates a new directory and changes to it in one command. Also supports cloning git repositories.
+A cross-platform implementation of the ZSH `take` command that works in bash, zsh, PowerShell and cmd.
 
 ## Features
 
-- Create and change to a new directory in one command
-- Create parent directories automatically
-- Clone git repositories (HTTPS and SSH)
-- Cross-platform support (Linux, macOS, Windows)
-- Shell integration (Bash, Zsh, PowerShell, CMD)
+- Creates and changes into directories in one command
+- Supports nested directory creation
+- Handles git repository cloning
+- Works with relative and absolute paths
+- Supports Unicode and special characters
+- Handles home directory (`~`) expansion
+- Platform-aware path handling
+- Git repository support (HTTPS/SSH)
 
 ## Installation
 
-### Prerequisites
+### Unix (bash/zsh)
 
-- Go 1.16 or later
-- Git (optional, for repository cloning)
-
-### From Source
-
-```bash
-go install github.com/deblasis/take/cmd/take@latest
-```
-
-### Shell Integration
-
-#### Unix (Bash/Zsh)
+Add to your `.bashrc` or `.zshrc`:
 
 ```bash
 curl -o- https://raw.githubusercontent.com/deblasis/take/main/scripts/install.sh | bash

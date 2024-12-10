@@ -1,6 +1,8 @@
 package take
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,6 +25,30 @@ func TestTake(t *testing.T) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
+
+	// Change to the temporary directory
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current directory: %v", err)
+	}
+	defer os.Chdir(originalWd)
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp dir: %v", err)
+	}
+
+	// Create test server for archive downloads
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/test.tar.gz":
+			w.Write([]byte("mock tarball content"))
+		case "/test.zip":
+			w.Write([]byte("mock zip content"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
 
 	// Helper function to create paths relative to temp dir
 	tmpPath := func(path string) string {
@@ -97,26 +123,62 @@ func TestTake(t *testing.T) {
 			wantErr: ErrInvalidPath,
 		},
 		{
-			name: "detect HTTPS git URL",
+			name: "handle git HTTPS URL",
 			opts: Options{
 				Path: "https://github.com/user/repo.git",
 			},
 			checkResult: func(t *testing.T, got Result) {
-				if got.Error == nil || got.Error.Error() != "git clone not implemented" {
-					t.Error("Expected git clone not implemented error")
+				if !got.WasCloned {
+					t.Error("Expected repository to be cloned")
 				}
 			},
 		},
 		{
-			name: "detect SSH git URL",
+			name: "handle git SSH URL",
 			opts: Options{
 				Path: "git@github.com:user/repo.git",
 			},
 			checkResult: func(t *testing.T, got Result) {
-				if got.Error == nil || got.Error.Error() != "git clone not implemented" {
-					t.Error("Expected git clone not implemented error")
+				if !got.WasCloned {
+					t.Error("Expected repository to be cloned")
 				}
 			},
+		},
+		{
+			name: "handle tarball URL",
+			opts: Options{
+				Path: ts.URL + "/test.tar.gz",
+			},
+			checkResult: func(t *testing.T, got Result) {
+				if !got.WasDownloaded {
+					t.Error("Expected tarball to be downloaded")
+				}
+			},
+		},
+		{
+			name: "handle zip URL",
+			opts: Options{
+				Path: ts.URL + "/test.zip",
+			},
+			checkResult: func(t *testing.T, got Result) {
+				if !got.WasDownloaded {
+					t.Error("Expected zip file to be downloaded")
+				}
+			},
+		},
+		{
+			name: "handle invalid URL",
+			opts: Options{
+				Path: "http://invalid.url/file.xyz",
+			},
+			wantErr: ErrInvalidURL,
+		},
+		{
+			name: "handle download failure",
+			opts: Options{
+				Path: ts.URL + "/nonexistent.tar.gz",
+			},
+			wantErr: ErrDownloadFailed,
 		},
 	}
 
@@ -128,16 +190,23 @@ func TestTake(t *testing.T) {
 				}
 			}
 
-			if tt.cleanup != nil {
-				defer tt.cleanup()
-			}
-
 			got := Take(tt.opts)
+
+			if tt.cleanup != nil {
+				if err := tt.cleanup(); err != nil {
+					t.Errorf("Cleanup failed: %v", err)
+				}
+			}
 
 			if tt.wantErr != nil {
 				if got.Error != tt.wantErr {
 					t.Errorf("Take() error = %v, wantErr %v", got.Error, tt.wantErr)
 				}
+				return
+			}
+
+			if got.Error != nil {
+				t.Errorf("Take() unexpected error = %v", got.Error)
 				return
 			}
 

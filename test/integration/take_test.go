@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/deblasis/take/internal/git"
@@ -173,6 +174,154 @@ pwd
 			// The last line of output should be the current directory
 			if string(output) != tt.wantDir+"\n" {
 				t.Errorf("shell integration test: got pwd = %q, want %q", string(output), tt.wantDir)
+			}
+		})
+	}
+}
+
+func TestTakeWindowsIntegration(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Skipping Windows-specific tests on non-Windows platform")
+	}
+
+	// Create a temporary test directory
+	tmpDir, err := os.MkdirTemp("", "take-windows-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tests := []struct {
+		name     string
+		args     []string
+		setup    func(t *testing.T)
+		validate func(t *testing.T, result take.Result)
+		wantErr  bool
+	}{
+		{
+			name: "windows backslash path",
+			args: []string{"test\\windows\\path"},
+			validate: func(t *testing.T, result take.Result) {
+				expected := filepath.Join(tmpDir, "test", "windows", "path")
+				if result.FinalPath != expected {
+					t.Errorf("Expected path %s, got %s", expected, result.FinalPath)
+				}
+			},
+		},
+		{
+			name: "windows drive letter path",
+			args: []string{"C:\\test\\path"},
+			validate: func(t *testing.T, result take.Result) {
+				if !filepath.IsAbs(result.FinalPath) {
+					t.Error("Expected absolute path with drive letter")
+				}
+			},
+		},
+		{
+			name: "windows UNC path",
+			args: []string{"\\\\server\\share\\path"},
+			validate: func(t *testing.T, result take.Result) {
+				if !strings.HasPrefix(result.FinalPath, "\\\\") {
+					t.Error("Expected UNC path")
+				}
+			},
+		},
+		{
+			name: "windows home directory",
+			args: []string{"~\\Documents\\test"},
+			validate: func(t *testing.T, result take.Result) {
+				home, _ := os.UserHomeDir()
+				expected := filepath.Join(home, "Documents", "test")
+				if result.FinalPath != expected {
+					t.Errorf("Expected path %s, got %s", expected, result.FinalPath)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setup != nil {
+				tt.setup(t)
+			}
+
+			// Build command
+			args := append([]string{"take"}, tt.args...)
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = tmpDir
+
+			// Run command
+			output, err := cmd.CombinedOutput()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("take command error = %v, wantErr %v\nOutput: %s", err, tt.wantErr, output)
+				return
+			}
+
+			if tt.validate != nil {
+				result := take.Result{
+					FinalPath:  string(output),
+					WasCreated: true,
+				}
+				tt.validate(t, result)
+			}
+		})
+	}
+}
+
+func TestTakeWindowsShellIntegration(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Skipping Windows shell integration tests on non-Windows platform")
+	}
+
+	// Create a temporary test directory
+	tmpDir, err := os.MkdirTemp("", "take-windows-shell-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a test PowerShell script
+	scriptContent := `
+. ..\..\completions\take.ps1
+take $args[0]
+Get-Location | Select-Object -ExpandProperty Path
+`
+	scriptPath := filepath.Join(tmpDir, "test.ps1")
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("Failed to create test script: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		dir     string
+		wantDir string
+	}{
+		{
+			name:    "change to new directory",
+			dir:     "newdir",
+			wantDir: filepath.Join(tmpDir, "newdir"),
+		},
+		{
+			name:    "change to nested directory",
+			dir:     "parent\\child",
+			wantDir: filepath.Join(tmpDir, "parent", "child"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command("powershell", "-File", scriptPath, tt.dir)
+			cmd.Dir = tmpDir
+
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Errorf("PowerShell integration test failed: %v\nOutput: %s", err, output)
+				return
+			}
+
+			// The last line of output should be the current directory
+			if string(output) != tt.wantDir+"\r\n" {
+				t.Errorf("PowerShell integration test: got pwd = %q, want %q", string(output), tt.wantDir)
 			}
 		})
 	}

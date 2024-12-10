@@ -56,18 +56,67 @@ main() {
     # Add take function to shell config
     cat << 'EOF' >> "$config_file"
 
-# take - Create a new directory and change to it
+# take - Create a new directory and change to it, or download and extract archives
 take() {
     if [ -z "$1" ]; then
-        echo "Usage: take <directory or git-url>" >&2
+        echo "Usage: take <directory|git-url|archive-url>" >&2
         return 1
     fi
-    take_result=$(take-cli "$1")
-    if [ $? -eq 0 ]; then
-        cd "$take_result"
+
+    # Handle URLs with query parameters
+    local target="$1"
+    if [[ "$target" == *"?"* ]]; then
+        target="${target%%\?*}"
+    fi
+
+    # Check if it's a URL
+    if [[ "$target" =~ ^(https?|ftp|git|ssh|rsync).*$ ]] || [[ "$target" =~ ^[A-Za-z0-9]+@.*$ ]]; then
+        # Create a temporary directory for downloads
+        local tmpdir=$(mktemp -d)
+        trap 'rm -rf "$tmpdir"' EXIT
+
+        # Handle different URL types
+        if [[ "$target" =~ \.(tar\.gz|tgz|tar\.bz2|tar\.xz)$ ]]; then
+            # Download and extract tarball
+            local archive="$tmpdir/archive.tar"
+            if ! curl -L "$target" -o "$archive"; then
+                echo "Failed to download archive" >&2
+                return 1
+            fi
+            local dir=$(tar -tf "$archive" | head -n1 | cut -d/ -f1)
+            if ! tar xf "$archive"; then
+                echo "Failed to extract archive" >&2
+                return 1
+            fi
+            cd "$dir" || return 1
+        elif [[ "$target" =~ \.zip$ ]]; then
+            # Download and extract ZIP
+            local archive="$tmpdir/archive.zip"
+            if ! curl -L "$target" -o "$archive"; then
+                echo "Failed to download archive" >&2
+                return 1
+            fi
+            local dir=$(unzip -l "$archive" | awk 'NR==4{print $4}' | cut -d/ -f1)
+            if ! unzip "$archive"; then
+                echo "Failed to extract archive" >&2
+                return 1
+            fi
+            cd "$dir" || return 1
+        elif [[ "$target" =~ \.git$ ]] || [[ "$target" =~ ^git@ ]]; then
+            # Clone git repository
+            local repo=$(basename "$target" .git)
+            if ! git clone "$target" "$repo"; then
+                echo "Failed to clone repository" >&2
+                return 1
+            fi
+            cd "$repo" || return 1
+        else
+            echo "Unsupported URL format" >&2
+            return 1
+        fi
     else
-        echo "$take_result" >&2
-        return 1
+        # Create and change to directory
+        mkdir -p "$target" && cd "$target"
     fi
 }
 EOF
