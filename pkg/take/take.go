@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"archive/zip"
 
 	"github.com/deblasis/take/internal/git"
 )
@@ -269,35 +270,89 @@ func handleZipURL(opts Options) Result {
 	}
 	tmpFile.Close()
 
-	// Extract archive
-	cmd := exec.Command("unzip", tmpFile.Name(), "-d", tmpDir)
-	if err := cmd.Run(); err != nil {
-		return Result{Error: fmt.Errorf("unzip failed: %v", err)}
-	}
-
-	// Find the extracted directory
-	entries, err := os.ReadDir(tmpDir)
+	// Open the zip file for reading
+	zipReader, err := zip.OpenReader(tmpFile.Name())
 	if err != nil {
-		return Result{Error: err}
+		return Result{Error: fmt.Errorf("failed to open zip: %v", err)}
 	}
+	defer zipReader.Close()
 
-	var extractedDir string
-	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != filepath.Base(tmpFile.Name()) {
-			extractedDir = entry.Name()
-			break
+	// Find the root directory in the zip
+	var rootDir string
+	for _, file := range zipReader.File {
+		name := filepath.ToSlash(file.Name)
+		parts := strings.Split(name, "/")
+
+		// Skip files/directories starting with "." or "_"
+		if strings.HasPrefix(parts[0], ".") || strings.HasPrefix(parts[0], "_") {
+			continue
+		}
+
+		// Get the top-level directory
+		if rootDir == "" {
+			rootDir = parts[0]
+		} else if parts[0] != rootDir {
+			// If we find a different top-level directory, use the common parent
+			if rootDir != filepath.Dir(name) {
+				rootDir = ""
+				break
+			}
 		}
 	}
 
-	if extractedDir == "" {
-		return Result{Error: fmt.Errorf("no directory found in archive")}
+	if rootDir == "" {
+		// If no root dir found, use the base name of the zip without extension
+		rootDir = strings.TrimSuffix(filepath.Base(opts.Path), ".zip")
+		// Create the root directory
+		if err := os.MkdirAll(filepath.Join(tmpDir, rootDir), 0755); err != nil {
+			return Result{Error: fmt.Errorf("failed to create root directory: %v", err)}
+		}
+	}
+
+	// Extract files
+	for _, file := range zipReader.File {
+		// Calculate extraction path
+		path := filepath.Join(tmpDir, file.Name)
+
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(path, file.Mode()); err != nil {
+				return Result{Error: fmt.Errorf("failed to create directory: %v", err)}
+			}
+			continue
+		}
+
+		// Create parent directories if needed
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return Result{Error: fmt.Errorf("failed to create parent directory: %v", err)}
+		}
+
+		// Create the file
+		dstFile, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, file.Mode())
+		if err != nil {
+			return Result{Error: fmt.Errorf("failed to create file: %v", err)}
+		}
+
+		// Open the file in the zip
+		srcFile, err := file.Open()
+		if err != nil {
+			dstFile.Close()
+			return Result{Error: fmt.Errorf("failed to open file in zip: %v", err)}
+		}
+
+		// Copy the contents
+		_, err = io.Copy(dstFile, srcFile)
+		srcFile.Close()
+		dstFile.Close()
+		if err != nil {
+			return Result{Error: fmt.Errorf("failed to extract file: %v", err)}
+		}
 	}
 
 	// Move the extracted directory to the current directory
-	finalPath := filepath.Join(".", extractedDir)
+	finalPath := filepath.Join(".", rootDir)
 	// Remove target directory if it exists
 	os.RemoveAll(finalPath)
-	if err := os.Rename(filepath.Join(tmpDir, extractedDir), finalPath); err != nil {
+	if err := os.Rename(filepath.Join(tmpDir, rootDir), finalPath); err != nil {
 		return Result{Error: fmt.Errorf("failed to move directory: %v", err)}
 	}
 

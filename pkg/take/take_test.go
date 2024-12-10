@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"os/exec"
+	"archive/zip"
+	"io"
 )
 
 type testCase struct {
@@ -61,12 +63,58 @@ func createMockZip(t *testing.T) string {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// Create zip
+	// Create zip using native Go implementation
 	zipPath := filepath.Join(dir, "test.zip")
-	cmd := exec.Command("zip", "-r", zipPath, "testdir")
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to create zip: %v\nOutput: %s", err, out)
+	zipFile, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatalf("Failed to create zip file: %v", err)
+	}
+	defer zipFile.Close()
+
+	zipWriter := zip.NewWriter(zipFile)
+	defer zipWriter.Close()
+
+	err = filepath.Walk(testDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Create zip header
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+
+		// Set relative path in zip
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(relPath)
+
+		if info.IsDir() {
+			header.Name += "/"
+		}
+
+		// Create file in zip
+		writer, err := zipWriter.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			_, err = io.Copy(writer, file)
+		}
+		return err
+	})
+
+	if err != nil {
+		t.Fatalf("Failed to create zip: %v", err)
 	}
 
 	return zipPath
@@ -359,8 +407,8 @@ func TestExpandPath(t *testing.T) {
 		},
 		{
 			name: "handle absolute path",
-			path: "/tmp/test",
-			want: "/tmp/test",
+			path: filepath.Join(string(filepath.Separator), "tmp", "test"),
+			want: filepath.Join(string(filepath.Separator), "tmp", "test"),
 		},
 		{
 			name: "handle relative path",
