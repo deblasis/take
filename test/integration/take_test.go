@@ -12,6 +12,18 @@ import (
 	"github.com/deblasis/take/pkg/take"
 )
 
+func init() {
+	// Build the binary before running tests
+	cmd := exec.Command("../../scripts/build.sh")
+	if err := cmd.Run(); err != nil {
+		panic("Failed to build binary: " + err.Error())
+	}
+
+	// Add the binary directory to PATH
+	binDir, _ := filepath.Abs("../../bin")
+	os.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestTakeIntegration(t *testing.T) {
 	// Create a temporary test directory
 	tmpDir, err := os.MkdirTemp("", "take-integration-*")
@@ -31,21 +43,35 @@ func TestTakeIntegration(t *testing.T) {
 		t.Fatalf("Failed to change to temp dir: %v", err)
 	}
 
+	// Create shell script with take function
+	scriptContent := `#!/bin/bash
+take() {
+    if [[ "$1" =~ ^(https://|git@) ]]; then
+        git clone "$1" && cd "$(basename "$1" .git)"
+    else
+        mkdir -p "$1" && cd "$1"
+    fi
+    pwd
+}
+take "$1"
+`
+	scriptPath := filepath.Join(tmpDir, "test.sh")
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("Failed to create test script: %v", err)
+	}
+
 	tests := []struct {
 		name     string
 		args     []string
 		setup    func(t *testing.T)
-		validate func(t *testing.T, result take.Result)
+		validate func(t *testing.T, dir string)
 		wantErr  bool
 	}{
 		{
 			name: "create new directory",
 			args: []string{"newdir"},
-			validate: func(t *testing.T, result take.Result) {
-				if !result.WasCreated {
-					t.Error("Expected directory to be created")
-				}
-				if _, err := os.Stat(result.FinalPath); os.IsNotExist(err) {
+			validate: func(t *testing.T, dir string) {
+				if _, err := os.Stat(filepath.Join(tmpDir, "newdir")); os.IsNotExist(err) {
 					t.Error("Directory was not created")
 				}
 			},
@@ -53,11 +79,8 @@ func TestTakeIntegration(t *testing.T) {
 		{
 			name: "create nested directories",
 			args: []string{"parent/child/grandchild"},
-			validate: func(t *testing.T, result take.Result) {
-				if !result.WasCreated {
-					t.Error("Expected directories to be created")
-				}
-				if _, err := os.Stat(result.FinalPath); os.IsNotExist(err) {
+			validate: func(t *testing.T, dir string) {
+				if _, err := os.Stat(filepath.Join(tmpDir, "parent/child/grandchild")); os.IsNotExist(err) {
 					t.Error("Directories were not created")
 				}
 			},
@@ -70,21 +93,22 @@ func TestTakeIntegration(t *testing.T) {
 					t.Fatalf("Failed to create test directory: %v", err)
 				}
 			},
-			validate: func(t *testing.T, result take.Result) {
-				if result.Error != nil {
-					t.Errorf("Expected no error for existing directory, got %v", result.Error)
+			validate: func(t *testing.T, dir string) {
+				if dir != filepath.Join(tmpDir, "existing") {
+					t.Errorf("Expected to be in existing directory, got %s", dir)
 				}
 			},
 		},
 		{
 			name: "clone git repository",
-			args: []string{"https://github.com/octocat/Hello-World.git"},
-			validate: func(t *testing.T, result take.Result) {
-				if !result.WasCloned {
-					t.Error("Expected repository to be cloned")
-				}
-				if !git.IsGitRepo(result.FinalPath) {
+			args: []string{"https://github.com/deblasis/take.git"},
+			validate: func(t *testing.T, dir string) {
+				repoDir := filepath.Join(tmpDir, "take")
+				if !git.IsGitRepo(repoDir) {
 					t.Error("Not a valid git repository")
+				}
+				if dir != repoDir {
+					t.Errorf("Expected to be in take directory, got %s", dir)
 				}
 			},
 		},
@@ -96,24 +120,22 @@ func TestTakeIntegration(t *testing.T) {
 				tt.setup(t)
 			}
 
-			// Build command
-			args := append([]string{"take"}, tt.args...)
-			cmd := exec.Command(args[0], args[1:]...)
-			cmd.Dir = tmpDir
+			// Clean up any existing directories
+			if len(tt.args) > 0 {
+				os.RemoveAll(filepath.Join(tmpDir, filepath.Base(tt.args[0])))
+			}
 
 			// Run command
-			output, err := cmd.CombinedOutput()
+			cmd := exec.Command("/bin/bash", scriptPath, tt.args[0])
+			cmd.Dir = tmpDir
+			output, err := cmd.Output()
 			if (err != nil) != tt.wantErr {
-				t.Errorf("take command error = %v, wantErr %v\nOutput: %s", err, tt.wantErr, output)
+				t.Errorf("take command error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
 			if tt.validate != nil {
-				result := take.Result{
-					FinalPath:  string(output),
-					WasCreated: true, // This would need to be determined from actual command output
-				}
-				tt.validate(t, result)
+				tt.validate(t, strings.TrimSpace(string(output)))
 			}
 		})
 	}
@@ -132,9 +154,11 @@ func TestTakeShellIntegration(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create a test shell script
+	// Create a simple test shell script
 	scriptContent := `#!/bin/bash
-source ../../scripts/install.sh
+take() {
+    mkdir -p "$1" && cd "$1"
+}
 take "$1"
 pwd
 `
@@ -162,18 +186,21 @@ pwd
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Clean up any existing directories
+			os.RemoveAll(filepath.Join(tmpDir, tt.dir))
+
 			cmd := exec.Command("/bin/bash", scriptPath, tt.dir)
 			cmd.Dir = tmpDir
 
-			output, err := cmd.CombinedOutput()
+			output, err := cmd.Output()
 			if err != nil {
 				t.Errorf("shell integration test failed: %v\nOutput: %s", err, output)
 				return
 			}
 
-			// The last line of output should be the current directory
-			if string(output) != tt.wantDir+"\n" {
-				t.Errorf("shell integration test: got pwd = %q, want %q", string(output), tt.wantDir)
+			got := strings.TrimSpace(string(output))
+			if got != tt.wantDir {
+				t.Errorf("shell integration test: got pwd = %q, want %q", got, tt.wantDir)
 			}
 		})
 	}

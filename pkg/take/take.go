@@ -2,12 +2,14 @@ package take
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -55,8 +57,9 @@ var urlPatterns = struct {
 	zip:     regexp.MustCompile(`^(https?|ftp).*\.(zip)$`),
 }
 
-// Take creates a directory and/or clones a repository and changes to it
+// Take executes the take command with the given options
 func Take(opts Options) Result {
+	// Validate input
 	if opts.Path == "" {
 		return Result{Error: ErrInvalidPath}
 	}
@@ -75,8 +78,30 @@ func Take(opts Options) Result {
 		}
 	}
 
-	// Handle local directory creation
-	return handleDirectory(opts)
+	// Handle local directory
+	expandedPath, err := expandPath(opts.Path)
+	if err != nil {
+		return Result{Error: err}
+	}
+
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(expandedPath, 0755); err != nil {
+		if os.IsPermission(err) {
+			return Result{Error: ErrPermissionDenied}
+		}
+		return Result{Error: err}
+	}
+
+	// Get absolute path
+	absPath, err := filepath.Abs(expandedPath)
+	if err != nil {
+		return Result{Error: err}
+	}
+
+	return Result{
+		FinalPath:  absPath,
+		WasCreated: true,
+	}
 }
 
 // handleDirectory creates a local directory
@@ -113,21 +138,27 @@ func handleGitURL(opts Options) Result {
 	// Extract repository name from URL
 	repoName := filepath.Base(opts.Path)
 	repoName = strings.TrimSuffix(repoName, ".git")
+	repoName = strings.TrimSuffix(repoName, "/")
 	targetDir := filepath.Join(".", repoName)
+
+	// Remove target directory if it exists
+	os.RemoveAll(targetDir)
 
 	// Build git clone command
 	args := []string{"clone"}
 	if opts.GitCloneDepth > 0 {
-		args = append(args, "--depth", string(opts.GitCloneDepth))
+		args = append(args, "--depth", strconv.Itoa(opts.GitCloneDepth))
 	}
 	args = append(args, opts.Path, targetDir)
 
 	// Execute git clone
 	cmd := exec.Command("git", args...)
+	cmd.Stderr = os.Stderr // Show git output for debugging
 	if err := cmd.Run(); err != nil {
-		return Result{Error: ErrGitCloneFailed}
+		return Result{Error: fmt.Errorf("git clone failed: %v", err)}
 	}
 
+	// Get absolute path
 	absPath, err := filepath.Abs(targetDir)
 	if err != nil {
 		return Result{Error: err}
@@ -141,36 +172,68 @@ func handleGitURL(opts Options) Result {
 
 // handleTarballURL downloads and extracts a tarball
 func handleTarballURL(opts Options) Result {
+	// Create temporary directory
+	tmpDir, err := os.MkdirTemp("", "take-*")
+	if err != nil {
+		return Result{Error: err}
+	}
+	defer os.RemoveAll(tmpDir)
+
 	// Create temporary file
-	tmpFile, err := os.CreateTemp("", "take-*.tar.*")
+	tmpFile, err := os.CreateTemp(tmpDir, "archive-*.tar.*")
 	if err != nil {
 		return Result{Error: err}
 	}
 	defer os.Remove(tmpFile.Name())
 
 	// Download file
-	if err := downloadFile(opts.Path, tmpFile); err != nil {
+	resp, err := http.Get(opts.Path)
+	if err != nil {
+		return Result{Error: ErrDownloadFailed}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
 		return Result{Error: ErrDownloadFailed}
 	}
 
+	// Copy to temp file
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		return Result{Error: ErrDownloadFailed}
+	}
+	tmpFile.Close()
+
 	// Extract archive
-	cmd := exec.Command("tar", "xf", tmpFile.Name())
+	cmd := exec.Command("tar", "xf", tmpFile.Name(), "-C", tmpDir)
 	if err := cmd.Run(); err != nil {
-		return Result{Error: ErrExtractionFailed}
+		return Result{Error: fmt.Errorf("tar extraction failed: %v", err)}
 	}
 
-	// Get the extracted directory name
-	cmd = exec.Command("tar", "tf", tmpFile.Name())
-	output, err := cmd.Output()
+	// Find the extracted directory
+	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
-		return Result{Error: ErrExtractionFailed}
+		return Result{Error: err}
 	}
 
-	// Get the root directory name
-	firstLine := strings.SplitN(string(output), "\n", 2)[0]
-	dirName := strings.Split(firstLine, "/")[0]
+	var extractedDir string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			extractedDir = entry.Name()
+			break
+		}
+	}
 
-	absPath, err := filepath.Abs(dirName)
+	if extractedDir == "" {
+		return Result{Error: fmt.Errorf("no directory found in archive")}
+	}
+
+	// Move the extracted directory to the current directory
+	finalPath := filepath.Join(".", extractedDir)
+	if err := os.Rename(filepath.Join(tmpDir, extractedDir), finalPath); err != nil {
+		return Result{Error: err}
+	}
+
+	absPath, err := filepath.Abs(finalPath)
 	if err != nil {
 		return Result{Error: err}
 	}
@@ -181,42 +244,72 @@ func handleTarballURL(opts Options) Result {
 	}
 }
 
-// handleZipURL downloads and extracts a ZIP file
+// handleZipURL downloads and extracts a zip file
 func handleZipURL(opts Options) Result {
+	// Create temporary directory
+	tmpDir, err := os.MkdirTemp("", "take-*")
+	if err != nil {
+		return Result{Error: err}
+	}
+	defer os.RemoveAll(tmpDir)
+
 	// Create temporary file
-	tmpFile, err := os.CreateTemp("", "take-*.zip")
+	tmpFile, err := os.CreateTemp(tmpDir, "archive-*.zip")
 	if err != nil {
 		return Result{Error: err}
 	}
 	defer os.Remove(tmpFile.Name())
 
 	// Download file
-	if err := downloadFile(opts.Path, tmpFile); err != nil {
+	resp, err := http.Get(opts.Path)
+	if err != nil {
+		return Result{Error: ErrDownloadFailed}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
 		return Result{Error: ErrDownloadFailed}
 	}
 
+	// Copy to temp file
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		return Result{Error: ErrDownloadFailed}
+	}
+	tmpFile.Close()
+
 	// Extract archive
-	cmd := exec.Command("unzip", tmpFile.Name())
+	cmd := exec.Command("unzip", tmpFile.Name(), "-d", tmpDir)
 	if err := cmd.Run(); err != nil {
-		return Result{Error: ErrExtractionFailed}
+		return Result{Error: fmt.Errorf("unzip failed: %v", err)}
 	}
 
-	// Get the extracted directory name
-	cmd = exec.Command("unzip", "-l", tmpFile.Name())
-	output, err := cmd.Output()
+	// Find the extracted directory
+	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
-		return Result{Error: ErrExtractionFailed}
+		return Result{Error: err}
 	}
 
-	// Parse unzip output to get root directory
-	lines := strings.Split(string(output), "\n")
-	if len(lines) < 4 {
-		return Result{Error: ErrExtractionFailed}
+	var extractedDir string
+	for _, entry := range entries {
+		if entry.IsDir() && entry.Name() != filepath.Base(tmpFile.Name()) {
+			extractedDir = entry.Name()
+			break
+		}
 	}
-	dirName := strings.Split(lines[3], "   ")[len(strings.Split(lines[3], "   "))-1]
-	dirName = strings.Split(dirName, "/")[0]
 
-	absPath, err := filepath.Abs(dirName)
+	if extractedDir == "" {
+		return Result{Error: fmt.Errorf("no directory found in archive")}
+	}
+
+	// Move the extracted directory to the current directory
+	finalPath := filepath.Join(".", extractedDir)
+	// Remove target directory if it exists
+	os.RemoveAll(finalPath)
+	if err := os.Rename(filepath.Join(tmpDir, extractedDir), finalPath); err != nil {
+		return Result{Error: fmt.Errorf("failed to move directory: %v", err)}
+	}
+
+	absPath, err := filepath.Abs(finalPath)
 	if err != nil {
 		return Result{Error: err}
 	}
@@ -241,4 +334,27 @@ func downloadFile(url string, file *os.File) error {
 
 	_, err = io.Copy(file, resp.Body)
 	return err
+}
+
+// expandPath expands the given path, handling home directory (~) expansion
+func expandPath(path string) (string, error) {
+	if path == "" {
+		return "", ErrInvalidPath
+	}
+
+	// Expand home directory
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(home, path[1:])
+	}
+
+	// Handle relative paths
+	if !filepath.IsAbs(path) {
+		path = filepath.Clean(path)
+	}
+
+	return path, nil
 }

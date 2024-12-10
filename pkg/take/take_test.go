@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"os/exec"
 )
 
 type testCase struct {
@@ -18,7 +19,87 @@ type testCase struct {
 	checkResult func(t *testing.T, got Result)
 }
 
+func createMockTarball(t *testing.T) string {
+	dir, err := os.MkdirTemp("", "take-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	// Create a test directory with a file
+	testDir := filepath.Join(dir, "testdir")
+	if err := os.MkdirAll(testDir, 0755); err != nil {
+		t.Fatalf("Failed to create test directory: %v", err)
+	}
+	testFile := filepath.Join(testDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Create tarball
+	tarPath := filepath.Join(dir, "test.tar.gz")
+	cmd := exec.Command("tar", "czf", tarPath, "-C", dir, "testdir")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to create tarball: %v\nOutput: %s", err, out)
+	}
+
+	return tarPath
+}
+
+func createMockZip(t *testing.T) string {
+	dir, err := os.MkdirTemp("", "take-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	// Create a test directory with a file
+	testDir := filepath.Join(dir, "testdir")
+	if err := os.MkdirAll(testDir, 0755); err != nil {
+		t.Fatalf("Failed to create test directory: %v", err)
+	}
+	testFile := filepath.Join(testDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Create zip
+	zipPath := filepath.Join(dir, "test.zip")
+	cmd := exec.Command("zip", "-r", zipPath, "testdir")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to create zip: %v\nOutput: %s", err, out)
+	}
+
+	return zipPath
+}
+
 func TestTake(t *testing.T) {
+	// Create mock archives
+	tarPath := createMockTarball(t)
+	zipPath := createMockZip(t)
+	defer os.RemoveAll(filepath.Dir(tarPath))
+	defer os.RemoveAll(filepath.Dir(zipPath))
+
+	// Create test server for archive downloads
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/test.tar.gz":
+			content, err := os.ReadFile(tarPath)
+			if err != nil {
+				t.Fatalf("Failed to read tarball: %v", err)
+			}
+			w.Write(content)
+		case "/test.zip":
+			content, err := os.ReadFile(zipPath)
+			if err != nil {
+				t.Fatalf("Failed to read zip: %v", err)
+			}
+			w.Write(content)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
 	// Create a temporary test directory
 	tmpDir, err := os.MkdirTemp("", "take-test-*")
 	if err != nil {
@@ -36,19 +117,6 @@ func TestTake(t *testing.T) {
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatalf("Failed to change to temp dir: %v", err)
 	}
-
-	// Create test server for archive downloads
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/test.tar.gz":
-			w.Write([]byte("mock tarball content"))
-		case "/test.zip":
-			w.Write([]byte("mock zip content"))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer ts.Close()
 
 	// Helper function to create paths relative to temp dir
 	tmpPath := func(path string) string {
@@ -125,7 +193,7 @@ func TestTake(t *testing.T) {
 		{
 			name: "handle git HTTPS URL",
 			opts: Options{
-				Path: "https://github.com/user/repo.git",
+				Path: "https://github.com/deblasis/take.git",
 			},
 			checkResult: func(t *testing.T, got Result) {
 				if !got.WasCloned {
@@ -136,7 +204,7 @@ func TestTake(t *testing.T) {
 		{
 			name: "handle git SSH URL",
 			opts: Options{
-				Path: "git@github.com:user/repo.git",
+				Path: "git@github.com:deblasis/take.git",
 			},
 			checkResult: func(t *testing.T, got Result) {
 				if !got.WasCloned {
