@@ -65,7 +65,6 @@ brews:
     install: |
       bin.install "take-cli"
       bash_completion.install "completions/take.bash" => "take"
-      zsh_completion.install "completions/take.zsh" => "_take"
       fish_completion.install "completions/take.fish"
 
 scoop:

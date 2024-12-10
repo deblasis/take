@@ -1,12 +1,13 @@
 # take - Cross-platform Directory Navigation
 
-A cross-platform implementation of the ZSH `take` command that works in bash, zsh, PowerShell and cmd.
+A cross-platform implementation that works in bash, PowerShell and cmd, __inspired__ by the ZSH `take` command. (utterly copied)
 
 ## Features
 
 - Creates and changes into directories in one command
 - Supports nested directory creation
 - Handles git repository cloning
+- Downloads and extracts archives (tar.gz, tgz, tar.bz2, tar.xz, zip)
 - Works with relative and absolute paths
 - Supports Unicode and special characters
 - Handles home directory (`~`) expansion
@@ -15,20 +16,20 @@ A cross-platform implementation of the ZSH `take` command that works in bash, zs
 
 ## Installation
 
-### Unix (bash/zsh)
+### Unix (bash)
 
-Add to your `.bashrc` or `.zshrc`:
+Add to your `.bashrc`:
 
 ```bash
 curl -o- https://raw.githubusercontent.com/deblasis/take/main/scripts/install.sh | bash
 ```
 
-Or manually add to your `.bashrc`/`.zshrc`:
+Or manually add to your `.bashrc`:
 
 ```bash
 take() {
     if [ -z "$1" ]; then
-        echo "Usage: take <directory or git-url>" >&2
+        echo "Usage: take <directory|git-url|archive-url>" >&2
         return 1
     fi
     take_result=$(take-cli "$1")
@@ -41,7 +42,7 @@ take() {
 }
 ```
 
-#### PowerShell
+### PowerShell
 
 ```powershell
 iwr https://raw.githubusercontent.com/deblasis/take/main/scripts/install.ps1 -useb | iex
@@ -53,7 +54,7 @@ Or manually add to your PowerShell profile:
 function Take {
     param([string]$Path)
     if (-not $Path) {
-        Write-Error "Usage: Take <directory or git-url>"
+        Write-Error "Usage: Take <directory|git-url|archive-url>"
         return
     }
     $result = take-cli $Path
@@ -94,6 +95,19 @@ take git@github.com:user/repo.git
 
 # Shallow clone
 take -depth 1 https://github.com/user/repo.git
+```
+
+### Download and Extract Archives
+
+```bash
+# Extract tar archives
+take https://example.com/archive.tar.gz
+take https://example.com/archive.tgz
+take https://example.com/archive.tar.bz2
+take https://example.com/archive.tar.xz
+
+# Extract ZIP archives
+take https://example.com/archive.zip
 ```
 
 ### Options
