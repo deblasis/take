@@ -29,7 +29,7 @@ func TestGetCurrentShell(t *testing.T) {
 				os.Unsetenv("PSModulePath")
 			},
 			want:     "zsh",
-			platform: "linux",
+			platform: "unix",
 		},
 		{
 			name: "detect bash",
@@ -38,7 +38,7 @@ func TestGetCurrentShell(t *testing.T) {
 				os.Unsetenv("PSModulePath")
 			},
 			want:     "bash",
-			platform: "linux",
+			platform: "unix",
 		},
 		{
 			name: "detect powershell",
@@ -60,8 +60,14 @@ func TestGetCurrentShell(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.platform != runtime.GOOS {
-				t.Skipf("Skipping test on %s (requires %s)", runtime.GOOS, tt.platform)
+			// Skip Windows-specific tests on Unix and vice versa
+			if tt.platform == "windows" && runtime.GOOS != "windows" {
+				t.Skipf("Skipping Windows test on %s", runtime.GOOS)
+				return
+			}
+			if tt.platform == "unix" && runtime.GOOS == "windows" {
+				t.Skipf("Skipping Unix test on Windows")
+				return
 			}
 
 			tt.setup()

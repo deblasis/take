@@ -102,6 +102,13 @@ take "$1"
 		{
 			name: "clone git repository",
 			args: []string{"https://github.com/deblasis/take.git"},
+			setup: func(t *testing.T) {
+				// Skip if no git credentials available
+				cmd := exec.Command("git", "config", "--get", "credential.helper")
+				if err := cmd.Run(); err != nil {
+					t.Skip("Git credentials not configured, skipping clone test")
+				}
+			},
 			validate: func(t *testing.T, dir string) {
 				repoDir := filepath.Join(tmpDir, "take")
 				if !git.IsGitRepo(repoDir) {
