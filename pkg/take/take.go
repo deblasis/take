@@ -172,8 +172,12 @@ func handleTarballURL(opts Options) Result {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create temporary file
-	tmpFile, err := os.CreateTemp(tmpDir, "archive-*.tar.*")
+	// Create temporary file with proper extension
+	ext := filepath.Ext(opts.Path)
+	if ext == "" {
+		ext = ".tar.gz" // default extension
+	}
+	tmpFile, err := os.CreateTemp(tmpDir, "archive-*"+ext)
 	if err != nil {
 		return Result{Error: err}
 	}

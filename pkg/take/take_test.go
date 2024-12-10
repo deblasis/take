@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"archive/zip"
 	"io"
+	"runtime"
 )
 
 type testCase struct {
@@ -278,12 +279,24 @@ func TestTake(t *testing.T) {
 				if err := os.MkdirAll(path, 0755); err != nil {
 					t.Fatalf("Failed to create noperm directory: %v", err)
 				}
-				if err := os.Chmod(path, 0000); err != nil {
-					t.Fatalf("Failed to change permissions: %v", err)
+				if runtime.GOOS == "windows" {
+					cmd := exec.Command("icacls", path, "/deny", "Everyone:(OI)(CI)F")
+					if err := cmd.Run(); err != nil {
+						t.Fatalf("Failed to set permissions: %v", err)
+					}
+				} else {
+					if err := os.Chmod(path, 0000); err != nil {
+						t.Fatalf("Failed to change permissions: %v", err)
+					}
 				}
 			},
 			cleanup: func() error {
-				return os.Chmod(tmpPath("noperm"), 0755)
+				path := tmpPath("noperm")
+				if runtime.GOOS == "windows" {
+					cmd := exec.Command("icacls", path, "/reset")
+					return cmd.Run()
+				}
+				return os.Chmod(path, 0755)
 			},
 			opts: Options{
 				Path: tmpPath("noperm/child"),
