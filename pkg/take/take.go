@@ -9,8 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
+
+	"github.com/deblasis/take/internal/git"
 )
 
 var (
@@ -64,10 +65,10 @@ func Take(opts Options) Result {
 		return Result{Error: ErrInvalidPath}
 	}
 
-	// Handle URLs
-	if strings.Contains(opts.Path, "://") || strings.Contains(opts.Path, "@") {
+	// Handle URLs and git repos
+	if strings.Contains(opts.Path, "://") || strings.Contains(opts.Path, "@") || git.IsGitRepo(opts.Path) {
 		switch {
-		case urlPatterns.git.MatchString(opts.Path):
+		case git.IsGitRepo(opts.Path) || urlPatterns.git.MatchString(opts.Path):
 			return handleGitURL(opts)
 		case urlPatterns.tarball.MatchString(opts.Path):
 			return handleTarballURL(opts)
@@ -133,40 +134,31 @@ func handleDirectory(opts Options) Result {
 	}
 }
 
-// handleGitURL clones a git repository
+// handleGitURL handles git repository cloning
 func handleGitURL(opts Options) Result {
-	// Extract repository name from URL
-	repoName := filepath.Base(opts.Path)
-	repoName = strings.TrimSuffix(repoName, ".git")
-	repoName = strings.TrimSuffix(repoName, "/")
-	targetDir := filepath.Join(".", repoName)
-
-	// Remove target directory if it exists
-	os.RemoveAll(targetDir)
-
-	// Build git clone command
-	args := []string{"clone"}
-	if opts.GitCloneDepth > 0 {
-		args = append(args, "--depth", strconv.Itoa(opts.GitCloneDepth))
-	}
-	args = append(args, opts.Path, targetDir)
-
-	// Execute git clone
-	cmd := exec.Command("git", args...)
-	cmd.Stderr = os.Stderr // Show git output for debugging
-	if err := cmd.Run(); err != nil {
-		return Result{Error: fmt.Errorf("git clone failed: %v", err)}
+	targetDir := git.GetRepoName(opts.Path)
+	if targetDir == "" {
+		targetDir = filepath.Base(opts.Path)
 	}
 
-	// Get absolute path
+	err := git.Clone(git.CloneOptions{
+		URL:       opts.Path,
+		TargetDir: targetDir,
+		Depth:     opts.GitCloneDepth,
+	})
+
+	if err != nil {
+		return Result{Error: fmt.Errorf("failed to clone repository: %w", err)}
+	}
+
 	absPath, err := filepath.Abs(targetDir)
 	if err != nil {
 		return Result{Error: err}
 	}
 
 	return Result{
-		FinalPath: absPath,
-		WasCloned: true,
+		FinalPath:  absPath,
+		WasCloned:  true,
 	}
 }
 

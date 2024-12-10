@@ -72,6 +72,49 @@ func createMockZip(t *testing.T) string {
 	return zipPath
 }
 
+// Create a mock git repository for testing
+func createTestRepo(t *testing.T) string {
+	repoDir, err := os.MkdirTemp("", "test-repo-*")
+	if err != nil {
+		t.Fatalf("Failed to create test repo dir: %v", err)
+	}
+
+	if err := exec.Command("git", "init", repoDir).Run(); err != nil {
+		t.Fatalf("Failed to init test repo: %v", err)
+	}
+
+	testFile := filepath.Join(repoDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cmd := exec.Command("git", "add", "test.txt")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to add test file: %v", err)
+	}
+
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to configure git email: %v", err)
+	}
+
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to configure git username: %v", err)
+	}
+
+	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	return repoDir
+}
+
 func TestTake(t *testing.T) {
 	// Create mock archives
 	tarPath := createMockTarball(t)
@@ -123,7 +166,19 @@ func TestTake(t *testing.T) {
 		return filepath.Join(tmpDir, path)
 	}
 
-	tests := []testCase{
+	// Create test repo
+	testRepo := createTestRepo(t)
+	defer os.RemoveAll(testRepo)
+
+	tests := []struct {
+		name        string
+		opts        Options
+		setup       func(t *testing.T)
+		cleanup     func() error
+		wantResult  Result
+		wantErr     error
+		checkResult func(t *testing.T, got Result)
+	}{
 		{
 			name: "create new directory",
 			opts: Options{
@@ -195,24 +250,11 @@ func TestTake(t *testing.T) {
 			wantErr: ErrInvalidPath,
 		},
 		{
-			name: "handle git HTTPS URL",
+			name: "handle git repo",
 			opts: Options{
-				Path: "https://github.com/deblasis/take.git",
-			},
-			setup: func(t *testing.T) {
-				// Skip if no git credentials available
-				cmd := exec.Command("git", "config", "--get", "credential.helper")
-				if err := cmd.Run(); err != nil {
-					t.Skip("Git credentials not configured, skipping clone test")
-				}
-				// Clean up any existing clone
-				os.RemoveAll("take")
+				Path: testRepo,
 			},
 			checkResult: func(t *testing.T, got Result) {
-				// Skip validation if test was skipped
-				if t.Skipped() {
-					return
-				}
 				if got.Error != nil {
 					t.Errorf("Unexpected error: %v", got.Error)
 					return
@@ -221,24 +263,6 @@ func TestTake(t *testing.T) {
 					t.Error("Expected repository to be cloned")
 				}
 			},
-		},
-		{
-			name: "handle git SSH URL",
-				opts: Options{
-					Path: "git@github.com:deblasis/take.git",
-				},
-				setup: func(t *testing.T) {
-					// Skip if no SSH key available
-					_, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa"))
-					if err != nil {
-						t.Skip("SSH key not found, skipping SSH clone test")
-					}
-				},
-				checkResult: func(t *testing.T, got Result) {
-					if !got.WasCloned {
-						t.Error("Expected repository to be cloned")
-					}
-				},
 		},
 		{
 			name: "handle tarball URL",

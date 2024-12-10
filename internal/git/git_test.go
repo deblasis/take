@@ -2,11 +2,23 @@ package git
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
 func TestIsValidURL(t *testing.T) {
+	// Create a temporary git repo for testing
+	tmpDir, err := os.MkdirTemp("", "git-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if err := exec.Command("git", "init", tmpDir).Run(); err != nil {
+		t.Fatalf("Failed to init test repo: %v", err)
+	}
+
 	tests := []struct {
 		name string
 		url  string
@@ -20,6 +32,11 @@ func TestIsValidURL(t *testing.T) {
 		{
 			name: "valid SSH URL",
 			url:  "git@github.com:user/repo.git",
+			want: true,
+		},
+		{
+			name: "valid local repo",
+			url:  tmpDir,
 			want: true,
 		},
 		{
@@ -147,6 +164,48 @@ func TestClone(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// Create a test repo
+	testRepoDir, err := os.MkdirTemp("", "test-repo-*")
+	if err != nil {
+		t.Fatalf("Failed to create test repo dir: %v", err)
+	}
+	defer os.RemoveAll(testRepoDir)
+
+	// Initialize test repo
+	if err := exec.Command("git", "init", testRepoDir).Run(); err != nil {
+		t.Fatalf("Failed to init test repo: %v", err)
+	}
+
+	// Create a test file and commit it
+	testFile := filepath.Join(testRepoDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	cmd := exec.Command("git", "add", "test.txt")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to add test file: %v", err)
+	}
+
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to configure git email: %v", err)
+	}
+
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to configure git username: %v", err)
+	}
+
+	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd.Dir = testRepoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
 	tests := []struct {
 		name    string
 		opts    CloneOptions
@@ -161,10 +220,10 @@ func TestClone(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "valid URL with target dir",
+			name: "valid local repo",
 			opts: CloneOptions{
-				URL:       "https://github.com/octocat/Hello-World.git",
-				TargetDir: filepath.Join(tmpDir, "hello-world"),
+				URL:       testRepoDir,
+				TargetDir: filepath.Join(tmpDir, "valid"),
 				Depth:     1,
 			},
 			wantErr: false,

@@ -23,6 +23,23 @@ type CloneOptions struct {
 
 // Clone clones a git repository
 func Clone(opts CloneOptions) error {
+	// For local repos, just copy the directory
+	if IsGitRepo(opts.URL) {
+		// Use git clone for local repos too to maintain git history
+		args := []string{"clone"}
+		if opts.Depth > 0 {
+			args = append(args, "--depth", fmt.Sprintf("%d", opts.Depth))
+		}
+		args = append(args, opts.URL, opts.TargetDir)
+
+		cmd := exec.Command("git", args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%w: %s", ErrCloneFailed, string(output))
+		}
+		return nil
+	}
+
 	if !IsValidURL(opts.URL) {
 		return ErrInvalidURL
 	}
@@ -49,15 +66,20 @@ func Clone(opts CloneOptions) error {
 	return nil
 }
 
-// IsValidURL checks if the given string is a valid git URL
+// IsValidURL checks if the given string is a valid git URL or local repo path
 func IsValidURL(url string) bool {
+	// Check if it's a local path that exists and is a git repo
+	if IsGitRepo(url) {
+		return true
+	}
+
 	// Check for SSH format (git@host:user/repo.git)
 	if strings.HasPrefix(url, "git@") && strings.Contains(url, ":") {
 		return strings.HasSuffix(url, ".git")
 	}
 
-	// Check for HTTPS format
-	if strings.HasPrefix(url, "https://") {
+	// Check for HTTPS/Git protocol
+	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "git://") {
 		return strings.HasSuffix(url, ".git")
 	}
 
