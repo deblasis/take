@@ -36,8 +36,12 @@ jobs:
           echo "Test timing summary:"
           jq -r '
             [select(.Action == "pass")] |
-            sort_by(.Elapsed) |
-            reverse |
+            group_by(.Package) |
+            map({
+              Package: .[0].Package,
+              Elapsed: (map(.Elapsed) | add)
+            }) |
+            sort_by(-.Elapsed) |
             .[0:10] |
             .[] |
             "\(.Package): \(.Elapsed)s"
