@@ -205,8 +205,18 @@ func TestTake(t *testing.T) {
 				if err := cmd.Run(); err != nil {
 					t.Skip("Git credentials not configured, skipping clone test")
 				}
+				// Clean up any existing clone
+				os.RemoveAll("take")
 			},
 			checkResult: func(t *testing.T, got Result) {
+				// Skip validation if test was skipped
+				if t.Skipped() {
+					return
+				}
+				if got.Error != nil {
+					t.Errorf("Unexpected error: %v", got.Error)
+					return
+				}
 				if !got.WasCloned {
 					t.Error("Expected repository to be cloned")
 				}

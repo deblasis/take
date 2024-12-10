@@ -1,31 +1,18 @@
 function take {
-    param(
-        [Parameter(Mandatory=$true, Position=0)]
-        [string]$Path
-    )
+    param([string]$Path)
 
-    # Handle git URLs
-    if ($Path -match '^(https://|git@)') {
-        $repoName = $Path -replace '.*[:/]([^/]+)/([^/]+)(\.git)?$', '$2'
-        git clone $Path $repoName
-        if ($?) {
+    if ($Path -match '^https?://') {
+        $repoName = [System.IO.Path]::GetFileNameWithoutExtension($Path)
+        if (git clone $Path $repoName) {
             Set-Location $repoName
+        } else {
+            return
         }
-        return
-    }
-
-    # Expand ~ to user home directory
-    if ($Path.StartsWith("~")) {
-        $Path = $Path.Replace("~", $HOME)
-    }
-
-    # Create directory if it doesn't exist
-    if (!(Test-Path $Path)) {
+    } else {
         New-Item -ItemType Directory -Path $Path -Force | Out-Null
+        Set-Location $Path
     }
-
-    # Change to the directory
-    Set-Location $Path
+    Get-Location | Select-Object -ExpandProperty Path
 }
 
 # Add tab completion for existing directories
