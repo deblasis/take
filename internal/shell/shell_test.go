@@ -90,19 +90,19 @@ func TestShellQuote(t *testing.T) {
 			name:     "simple path unix",
 			input:    "/path/to/dir",
 			want:     "'/path/to/dir'",
-			platform: "linux",
+			platform: "unix",
 		},
 		{
 			name:     "path with spaces unix",
 			input:    "/path/to/my dir",
 			want:     "'/path/to/my dir'",
-			platform: "linux",
+			platform: "unix",
 		},
 		{
 			name:     "path with single quotes unix",
 			input:    "/path/to/O'Neil",
 			want:     "'/path/to/O'\\''Neil'",
-			platform: "linux",
+			platform: "unix",
 		},
 		{
 			name:     "simple path windows",
@@ -126,8 +126,13 @@ func TestShellQuote(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.platform != runtime.GOOS {
-				t.Skipf("Skipping test on %s (requires %s)", runtime.GOOS, tt.platform)
+			if tt.platform == "windows" && runtime.GOOS != "windows" {
+				t.Skipf("Skipping Windows test on %s", runtime.GOOS)
+				return
+			}
+			if tt.platform == "unix" && runtime.GOOS == "windows" {
+				t.Skipf("Skipping Unix test on Windows")
+				return
 			}
 
 			got := shellQuote(tt.input)

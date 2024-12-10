@@ -108,8 +108,14 @@ take "$1"
 				if err := cmd.Run(); err != nil {
 					t.Skip("Git credentials not configured, skipping clone test")
 				}
+				// Clean up any existing clone
+				os.RemoveAll(filepath.Join(tmpDir, "take"))
 			},
 			validate: func(t *testing.T, dir string) {
+				// Skip validation if test was skipped
+				if t.Skipped() {
+					return
+				}
 				repoDir := filepath.Join(tmpDir, "take")
 				if !git.IsGitRepo(repoDir) {
 					t.Error("Not a valid git repository")

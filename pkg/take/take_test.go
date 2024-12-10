@@ -170,12 +170,14 @@ func TestTake(t *testing.T) {
 		},
 		{
 			name: "handle permission denied",
-			setup: func() error {
+			setup: func(t *testing.T) {
 				path := tmpPath("noperm")
 				if err := os.MkdirAll(path, 0755); err != nil {
-					return err
+					t.Fatalf("Failed to create noperm directory: %v", err)
 				}
-				return os.Chmod(path, 0000)
+				if err := os.Chmod(path, 0000); err != nil {
+					t.Fatalf("Failed to change permissions: %v", err)
+				}
 			},
 			cleanup: func() error {
 				return os.Chmod(tmpPath("noperm"), 0755)
