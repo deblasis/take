@@ -12,7 +12,7 @@ import (
 type testCase struct {
 	name        string
 	opts        Options
-	setup       func() error
+	setup       func(t *testing.T)
 	cleanup     func() error
 	wantResult  Result
 	wantErr     error
@@ -154,8 +154,10 @@ func TestTake(t *testing.T) {
 		},
 		{
 			name: "handle existing directory",
-			setup: func() error {
-				return os.MkdirAll(tmpPath("existing"), 0755)
+			setup: func(t *testing.T) {
+				if err := os.MkdirAll(tmpPath("existing"), 0755); err != nil {
+					t.Fatalf("Failed to create existing directory: %v", err)
+				}
 			},
 			opts: Options{
 				Path: tmpPath("existing"),
@@ -195,13 +197,12 @@ func TestTake(t *testing.T) {
 			opts: Options{
 				Path: "https://github.com/deblasis/take.git",
 			},
-			setup: func() error {
+			setup: func(t *testing.T) {
 				// Skip if no git credentials available
 				cmd := exec.Command("git", "config", "--get", "credential.helper")
 				if err := cmd.Run(); err != nil {
 					t.Skip("Git credentials not configured, skipping clone test")
 				}
-				return nil
 			},
 			checkResult: func(t *testing.T, got Result) {
 				if !got.WasCloned {
@@ -211,22 +212,21 @@ func TestTake(t *testing.T) {
 		},
 		{
 			name: "handle git SSH URL",
-			opts: Options{
-				Path: "git@github.com:deblasis/take.git",
-			},
-			setup: func() error {
-				// Skip if no SSH key available
-				_, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa"))
-				if err != nil {
-					t.Skip("SSH key not found, skipping SSH clone test")
-				}
-				return nil
-			},
-			checkResult: func(t *testing.T, got Result) {
-				if !got.WasCloned {
-					t.Error("Expected repository to be cloned")
-				}
-			},
+				opts: Options{
+					Path: "git@github.com:deblasis/take.git",
+				},
+				setup: func(t *testing.T) {
+					// Skip if no SSH key available
+					_, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa"))
+					if err != nil {
+						t.Skip("SSH key not found, skipping SSH clone test")
+					}
+				},
+				checkResult: func(t *testing.T, got Result) {
+					if !got.WasCloned {
+						t.Error("Expected repository to be cloned")
+					}
+				},
 		},
 		{
 			name: "handle tarball URL",
@@ -269,9 +269,7 @@ func TestTake(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.setup != nil {
-				if err := tt.setup(); err != nil {
-					t.Fatalf("Setup failed: %v", err)
-				}
+				tt.setup(t)
 			}
 
 			got := Take(tt.opts)
